@@ -5,25 +5,51 @@
     import { onMount } from "svelte";
     import { fly, fade } from "svelte/transition";
 
+    interface Deadline {
+        id?: string;
+        week_number: number;
+        deadline_date: string;
+        description: string;
+    }
+
     let schoolYear = $state("2023-2024");
     let quarter = $state(1);
-    let deadlines = $state<any[]>([]);
+    let deadlines = $state<Deadline[]>([]);
     let loading = $state(true);
     let saving = $state(false);
+    let resolvedDistrictId = $state<string | null>(null);
+
+    const isTeacher = $derived($profile?.role === "Teacher");
+    const canEdit = $derived(!isTeacher);
 
     onMount(async () => {
+        // Resolve district ID — supervisors have it directly, teachers get it through their school
         if ($profile?.district_id) {
+            resolvedDistrictId = $profile.district_id;
+        } else if ($profile?.school_id) {
+            const { data } = await supabase
+                .from("schools")
+                .select("district_id")
+                .eq("id", $profile.school_id)
+                .single();
+            resolvedDistrictId = data?.district_id || null;
+        }
+
+        if (resolvedDistrictId) {
             await loadDeadlines();
         }
         loading = false;
     });
 
     async function loadDeadlines() {
+        if (!resolvedDistrictId) return;
+
         const { data, error } = await supabase
             .from("academic_calendar")
             .select("*")
             .eq("school_year", schoolYear)
             .eq("quarter", quarter)
+            .eq("district_id", resolvedDistrictId)
             .order("week_number", { ascending: true });
 
         if (error) {
@@ -36,13 +62,13 @@
         deadlines = Array.from({ length: 10 }, (_, i) => {
             const weekNum = i + 1;
             const weekData = existingWeeks.find(
-                (w) => w.week_number === weekNum,
+                (w: any) => w.week_number === weekNum,
             );
             return {
                 id: weekData?.id,
                 week_number: weekNum,
                 deadline_date: weekData?.deadline_date
-                    ? weekData.deadline_date.split("T")[0]
+                    ? (weekData.deadline_date as string).split("T")[0]
                     : "",
                 description:
                     weekData?.description || `Week ${weekNum} Submission`,
@@ -51,9 +77,8 @@
     }
 
     async function saveWeek(weekData: any) {
-        if (!$profile?.district_id || !weekData.deadline_date) return;
+        if (!canEdit || !resolvedDistrictId || !weekData.deadline_date) return;
 
-        // Find if this record already exists to use its ID
         const payload = {
             ...(weekData.id ? { id: weekData.id } : {}),
             school_year: schoolYear,
@@ -61,7 +86,7 @@
             week_number: weekData.week_number,
             deadline_date: new Date(weekData.deadline_date).toISOString(),
             description: weekData.description,
-            district_id: $profile.district_id,
+            district_id: resolvedDistrictId,
         };
 
         const { data, error } = await supabase
@@ -77,11 +102,23 @@
             );
         } else {
             addToast("success", `Week ${weekData.week_number} updated!`);
-            // Update the local state with the returned ID if it was new
             if (data && data[0]) {
                 weekData.id = data[0].id;
             }
         }
+    }
+
+    function isPast(dateStr: string): boolean {
+        if (!dateStr) return false;
+        return new Date(dateStr) < new Date();
+    }
+
+    function isUpcoming(dateStr: string): boolean {
+        if (!dateStr) return false;
+        const d = new Date(dateStr);
+        const now = new Date();
+        const threeDays = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000);
+        return d >= now && d <= threeDays;
     }
 
     $effect(() => {
@@ -107,8 +144,12 @@
                 📅 Academic Calendar
             </h1>
             <p class="text-lg text-text-secondary mt-2 max-w-lg">
-                Manage weekly submission deadlines. Changes are applied per
-                week.
+                {#if canEdit}
+                    Manage weekly submission deadlines. Changes are applied per
+                    week.
+                {:else}
+                    Your submission deadlines for the selected quarter.
+                {/if}
             </p>
         </div>
 
@@ -164,34 +205,53 @@
                                     Week {d.week_number}
                                 </h3>
                                 <p
-                                    class="text-xs text-text-muted mt-1 font-medium tracking-wide border-b border-transparent group-hover:border-deped-blue/20 transition-all"
+                                    class="text-xs text-text-muted mt-1 font-medium tracking-wide"
                                 >
-                                    DEADLINE SETUP
+                                    {#if !canEdit && d.deadline_date}
+                                        {#if isPast(d.deadline_date)}
+                                            <span class="text-deped-red"
+                                                >● Past</span
+                                            >
+                                        {:else if isUpcoming(d.deadline_date)}
+                                            <span class="text-deped-gold-dark"
+                                                >● Due Soon</span
+                                            >
+                                        {:else}
+                                            <span class="text-deped-green"
+                                                >● Upcoming</span
+                                            >
+                                        {/if}
+                                    {:else}
+                                        DEADLINE SETUP
+                                    {/if}
                                 </p>
                             </div>
                         </div>
 
-                        <button
-                            onclick={() => saveWeek(d)}
-                            class="p-2.5 rounded-xl bg-deped-blue/5 text-deped-blue hover:bg-deped-blue hover:text-white active:scale-90 transition-all shadow-sm"
-                            title="Save Week {d.week_number}"
-                        >
-                            <svg
-                                xmlns="http://www.w3.org/2000/svg"
-                                class="w-5 h-5"
-                                viewBox="0 0 24 24"
-                                fill="none"
-                                stroke="currentColor"
-                                stroke-width="2.5"
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                                ><path
-                                    d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"
-                                ></path><polyline points="17 21 17 13 7 13 7 21"
-                                ></polyline><polyline points="7 3 7 8 15 8"
-                                ></polyline></svg
+                        {#if canEdit}
+                            <button
+                                onclick={() => saveWeek(d)}
+                                class="p-2.5 rounded-xl bg-deped-blue/5 text-deped-blue hover:bg-deped-blue hover:text-white active:scale-90 transition-all shadow-sm"
+                                title="Save Week {d.week_number}"
                             >
-                        </button>
+                                <svg
+                                    xmlns="http://www.w3.org/2000/svg"
+                                    class="w-5 h-5"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2.5"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    ><path
+                                        d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"
+                                    ></path><polyline
+                                        points="17 21 17 13 7 13 7 21"
+                                    ></polyline><polyline points="7 3 7 8 15 8"
+                                    ></polyline></svg
+                                >
+                            </button>
+                        {/if}
                     </div>
 
                     <div class="space-y-4">
@@ -202,12 +262,29 @@
                             >
                                 Due Date
                             </label>
-                            <input
-                                id="date-{i}"
-                                type="date"
-                                bind:value={d.deadline_date}
-                                class="w-full px-4 py-3.5 bg-white/50 border border-gray-100 rounded-2xl focus:ring-2 focus:ring-deped-blue/20 focus:border-deped-blue outline-none text-sm font-semibold transition-all"
-                            />
+                            {#if canEdit}
+                                <input
+                                    id="date-{i}"
+                                    type="date"
+                                    bind:value={d.deadline_date}
+                                    class="w-full px-4 py-3.5 bg-white/50 border border-gray-100 rounded-2xl focus:ring-2 focus:ring-deped-blue/20 focus:border-deped-blue outline-none text-sm font-semibold transition-all"
+                                />
+                            {:else}
+                                <p
+                                    class="w-full px-4 py-3.5 bg-white/30 border border-gray-100 rounded-2xl text-sm font-semibold text-text-primary"
+                                >
+                                    {d.deadline_date
+                                        ? new Date(
+                                              d.deadline_date + "T00:00:00",
+                                          ).toLocaleDateString("en-PH", {
+                                              weekday: "long",
+                                              month: "long",
+                                              day: "numeric",
+                                              year: "numeric",
+                                          })
+                                        : "Not set"}
+                                </p>
+                            {/if}
                         </div>
 
                         <div class="relative">
@@ -217,38 +294,72 @@
                             >
                                 Notes / Purpose
                             </label>
-                            <input
-                                id="desc-{i}"
-                                type="text"
-                                bind:value={d.description}
-                                placeholder="e.g. DLL Submission..."
-                                class="w-full px-4 py-3.5 bg-white/50 border border-gray-100 rounded-2xl focus:ring-2 focus:ring-deped-blue/20 focus:border-deped-blue outline-none text-sm font-medium placeholder:text-gray-300 transition-all"
-                            />
+                            {#if canEdit}
+                                <input
+                                    id="desc-{i}"
+                                    type="text"
+                                    bind:value={d.description}
+                                    placeholder="e.g. DLL Submission..."
+                                    class="w-full px-4 py-3.5 bg-white/50 border border-gray-100 rounded-2xl focus:ring-2 focus:ring-deped-blue/20 focus:border-deped-blue outline-none text-sm font-medium placeholder:text-gray-300 transition-all"
+                                />
+                            {:else}
+                                <p
+                                    class="w-full px-4 py-3.5 bg-white/30 border border-gray-100 rounded-2xl text-sm font-medium text-text-secondary"
+                                >
+                                    {d.description || "—"}
+                                </p>
+                            {/if}
                         </div>
                     </div>
                 </div>
             {/each}
         </div>
 
-        <div
-            class="mt-12 p-8 bg-gradient-to-br from-deped-blue/5 to-transparent rounded-[2.5rem] border border-white/50 shadow-inner"
-        >
-            <div class="flex items-start gap-4">
-                <span class="text-2xl mt-0.5">💡</span>
-                <div>
-                    <h4 class="font-bold text-deped-blue mb-1">How it works</h4>
-                    <p class="text-sm text-text-secondary leading-relaxed">
-                        Each week is saved individually by clicking the <span
-                            class="inline-flex items-center justify-center w-6 h-6 rounded bg-deped-blue text-white text-[10px]"
-                            >💾</span
-                        >
-                        button inside the card. Deadlines are set to
-                        <strong>11:59 PM</strong> of the selected date. Submissions
-                        after this will be marked as "Late" or "Non-compliant" automatically.
-                    </p>
+        {#if canEdit}
+            <div
+                class="mt-12 p-8 bg-gradient-to-br from-deped-blue/5 to-transparent rounded-[2.5rem] border border-white/50 shadow-inner"
+            >
+                <div class="flex items-start gap-4">
+                    <span class="text-2xl mt-0.5">💡</span>
+                    <div>
+                        <h4 class="font-bold text-deped-blue mb-1">
+                            How it works
+                        </h4>
+                        <p class="text-sm text-text-secondary leading-relaxed">
+                            Each week is saved individually by clicking the <span
+                                class="inline-flex items-center justify-center w-6 h-6 rounded bg-deped-blue text-white text-[10px]"
+                                >💾</span
+                            >
+                            button inside the card. Deadlines are set to
+                            <strong>11:59 PM</strong> of the selected date. Submissions
+                            after this will be marked as "Late" or "Non-compliant"
+                            automatically.
+                        </p>
+                    </div>
                 </div>
             </div>
-        </div>
+        {:else}
+            <div
+                class="mt-12 p-8 bg-gradient-to-br from-deped-green/5 to-transparent rounded-[2.5rem] border border-white/50 shadow-inner"
+            >
+                <div class="flex items-start gap-4">
+                    <span class="text-2xl mt-0.5">📌</span>
+                    <div>
+                        <h4 class="font-bold text-deped-green mb-1">
+                            Submission Reminders
+                        </h4>
+                        <p class="text-sm text-text-secondary leading-relaxed">
+                            Submit your documents before the deadline to be
+                            marked as
+                            <strong>Compliant</strong>. Submissions after the
+                            deadline are marked as <strong>Late</strong> or
+                            <strong>Non-compliant</strong>. Contact your
+                            supervisor if you need deadline adjustments.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        {/if}
     {/if}
 </div>
 

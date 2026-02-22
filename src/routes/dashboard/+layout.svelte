@@ -1,5 +1,6 @@
 <script lang="ts">
     import Sidebar from "$lib/components/Sidebar.svelte";
+    import NotificationCenter from "$lib/components/NotificationCenter.svelte";
     import { authLoading, profile, user } from "$lib/utils/auth";
     import { goto } from "$app/navigation";
 
@@ -37,7 +38,12 @@
 
         <!-- Main content area — pushed right to account for sidebar -->
         <main class="lg:ml-72 min-h-screen">
-            <div class="p-6 lg:p-8 max-w-7xl mx-auto">
+            <!-- Top bar with notifications -->
+            <div class="flex justify-end items-center px-6 lg:px-8 pt-4">
+                <NotificationCenter />
+            </div>
+
+            <div class="p-6 lg:p-8 pt-2 max-w-7xl mx-auto">
                 {@render children()}
             </div>
         </main>

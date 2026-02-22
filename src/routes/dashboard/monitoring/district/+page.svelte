@@ -4,7 +4,7 @@
     import StatCard from "$lib/components/StatCard.svelte";
     import StatusBadge from "$lib/components/StatusBadge.svelte";
     import ComplianceTrendChart from "$lib/components/ComplianceTrendChart.svelte";
-    import { onMount } from "svelte";
+    import { onMount, onDestroy } from "svelte";
     import { fly, fade } from "svelte/transition";
     import {
         calculateCompliance,
@@ -16,13 +16,21 @@
         getWeekNumber,
     } from "$lib/utils/useDashboardData";
 
+    interface KPI {
+        totalSchools: number;
+        overallRate: number;
+        lateCount: number;
+        atRiskCount: number;
+        previousRate: number;
+    }
+
     // Data
     let schools = $state<any[]>([]);
     let districtSubmissions = $state<any[]>([]);
     let loading = $state(true);
 
     // KPI state
-    let kpi = $state({
+    let kpi = $state<KPI>({
         totalSchools: 0,
         overallRate: 0,
         lateCount: 0,
@@ -38,9 +46,29 @@
     let sortField = $state<string>("rate");
     let sortDir = $state<"asc" | "desc">("desc");
 
+    let realtimeChannel: ReturnType<typeof supabase.channel> | null = null;
+
     onMount(async () => {
         await loadDistrictData();
         loading = false;
+
+        // Subscribe to real-time submission changes
+        realtimeChannel = supabase
+            .channel("district-submissions")
+            .on(
+                "postgres_changes",
+                { event: "*", schema: "public", table: "submissions" },
+                () => {
+                    loadDistrictData();
+                },
+            )
+            .subscribe();
+    });
+
+    onDestroy(() => {
+        if (realtimeChannel) {
+            supabase.removeChannel(realtimeChannel);
+        }
     });
 
     async function loadDistrictData() {
@@ -88,7 +116,9 @@
         // Calculate Overall District KPIs
         const totalDistrictLoads = districtLoads.length;
         const currentWk = getWeekNumber();
-        const currentCal = calendar.find((c) => c.week_number === currentWk);
+        const currentCal = calendar.find(
+            (c: any) => c.week_number === currentWk,
+        );
 
         const overallStats = calculateCompliance(
             districtSubmissions,
@@ -125,7 +155,9 @@
         kpi.atRiskCount = schools.filter((s: any) => s.rate < 75).length;
 
         // Previous week rate
-        const prevCal = calendar.find((c) => c.week_number === currentWk - 1);
+        const prevCal = calendar.find(
+            (c: any) => c.week_number === currentWk - 1,
+        );
         const prevWeekSubs = districtSubmissions.filter((s: any) => {
             const wn = s.week_number || getWeekNumber(new Date(s.created_at));
             return wn === currentWk - 1;
