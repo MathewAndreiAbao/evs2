@@ -151,13 +151,12 @@ export async function* runPipeline(
                 file_hash: fileHash,
                 file_size: stamped.byteLength,
                 doc_type: options.docType || 'Unknown',
-                status: complianceStatus === 'on-time' ? 'Compliant' : complianceStatus === 'late' ? 'Late' : 'Non-compliant',
                 week_number: options.weekNumber,
                 subject: options.subject,
                 school_year: options.schoolYear || '2023-2024',
                 calendar_id: options.calendarId,
                 teaching_load_id: options.teachingLoadId,
-                compliance_status: complianceStatus // THIS MUST BE 'on-time', 'late', or 'missing'
+                compliance_status: complianceStatus
             });
 
             if (dbError) {
