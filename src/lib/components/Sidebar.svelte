@@ -26,7 +26,12 @@
 			href: "/dashboard/calendar",
 			label: "Academic Calendar",
 			icon: "📅",
-			roles: ["School Head", "Master Teacher", "District Supervisor"],
+			roles: [
+				"Teacher",
+				"School Head",
+				"Master Teacher",
+				"District Supervisor",
+			],
 		},
 		{
 			href: "/dashboard/upload",
