@@ -216,8 +216,7 @@ export async function processQueue(force = false): Promise<{ success: number; fa
                     subject: item.options.subject,
                     calendar_id: item.options.calendarId || null,
                     teaching_load_id: item.options.teachingLoadId || null,
-                    compliance_status: complianceStatus,
-                    status: complianceStatus === 'on-time' ? 'Compliant' : complianceStatus === 'late' ? 'Late' : 'Non-compliant'
+                    compliance_status: complianceStatus
                 });
 
                 if (dbError) {

@@ -84,11 +84,12 @@ CREATE TABLE submissions (
     file_hash TEXT NOT NULL,
     file_size INTEGER,
     doc_type TEXT CHECK (doc_type IN ('DLL', 'ISP', 'ISR', 'Unknown')),
-    status TEXT DEFAULT 'Compliant' CHECK (status IN ('Compliant', 'Late', 'Non-compliant', 'Under Review')),
     week_number INTEGER,
     subject TEXT,
     school_year TEXT,
     calendar_id UUID REFERENCES academic_calendar(id),
+    teaching_load_id UUID REFERENCES teaching_loads(id) ON DELETE SET NULL,
+    compliance_status TEXT DEFAULT 'on-time' CHECK (compliance_status IN ('on-time', 'late', 'missing')),
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
