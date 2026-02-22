@@ -6,7 +6,7 @@
     import ComplianceHeatmap from "$lib/components/ComplianceHeatmap.svelte";
     import ComplianceTrendChart from "$lib/components/ComplianceTrendChart.svelte";
     import DrillDownModal from "$lib/components/DrillDownModal.svelte";
-    import { onMount } from "svelte";
+    import { onMount, onDestroy } from "svelte";
     import { fly, fade } from "svelte/transition";
     import {
         calculateCompliance,
@@ -20,12 +20,46 @@
     } from "$lib/utils/useDashboardData";
 
     // Data
-    let teachers = $state<any[]>([]);
-    let allSubmissions = $state<any[]>([]);
+    interface Teacher {
+        id: string;
+        full_name: string;
+        role: string;
+        district_id: string;
+        loadCount?: number;
+        rate?: number;
+        total?: number;
+        Compliant?: number;
+        Late?: number;
+        NonCompliant?: number;
+    }
+
+    interface Submission {
+        id: string;
+        user_id: string;
+        file_name: string;
+        doc_type: string;
+        status: string;
+        compliance_status: string;
+        created_at: string;
+        week_number?: number;
+        teaching_loads?: any;
+    }
+
+    interface KPI {
+        totalTeachers: number;
+        overallRate: number;
+        lateCount: number;
+        atRiskCount: number;
+        previousRate: number;
+    }
+
+    // Data
+    let teachers = $state<Teacher[]>([]);
+    let allSubmissions = $state<Submission[]>([]);
     let loading = $state(true);
 
     // KPI state
-    let kpi = $state({
+    let kpi = $state<KPI>({
         totalTeachers: 0,
         overallRate: 0,
         lateCount: 0,
@@ -49,23 +83,46 @@
 
     // Drill-down modal
     let showModal = $state(false);
-    let selectedTeacher = $state<any>(null);
-    let selectedSubmissions = $state<any[]>([]);
+    let selectedTeacher = $state<Teacher | null>(null);
+    let selectedSubmissions = $state<Submission[]>([]);
 
     // Alert teachers (≥2 late submissions)
-    let alertTeachers = $derived(() => {
-        return teachers.filter((t) => {
-            const subs = allSubmissions.filter((s) => s.user_id === t.id);
+    const alertTeachers = $derived(() => {
+        return teachers.filter((t: Teacher) => {
+            const subs = allSubmissions.filter(
+                (s: Submission) => s.user_id === t.id,
+            );
             const late = subs.filter(
-                (s) => s.compliance_status === "Late" || s.status === "Late",
+                (s: Submission) =>
+                    s.compliance_status === "Late" || s.status === "Late",
             ).length;
             return late >= 2;
         });
     });
 
+    let realtimeChannel: ReturnType<typeof supabase.channel> | null = null;
+
     onMount(async () => {
         await loadSchoolData();
         loading = false;
+
+        // Subscribe to real-time submission changes
+        realtimeChannel = supabase
+            .channel("school-submissions")
+            .on(
+                "postgres_changes",
+                { event: "*", schema: "public", table: "submissions" },
+                () => {
+                    loadSchoolData();
+                },
+            )
+            .subscribe();
+    });
+
+    onDestroy(() => {
+        if (realtimeChannel) {
+            supabase.removeChannel(realtimeChannel);
+        }
     });
 
     async function loadSchoolData() {
@@ -100,35 +157,40 @@
             ],
         );
 
-        teachers = teachersRes.data || [];
+        teachers = (teachersRes.data || []).map((t: any) => t as Teacher);
         const schoolLoads = loadsRes.data || [];
         const districtId = teachers[0]?.district_id || userProfile.district_id;
 
-        let calendar = calendarRes.data || [];
+        let calendar = (calendarRes.data || []) as any[];
         if (districtId) {
-            calendar = calendar.filter((c) => c.district_id === districtId);
+            calendar = calendar.filter(
+                (c: any) => c.district_id === districtId,
+            );
         }
 
         // Attach load count to each teacher
-        teachers = teachers.map((t) => ({
+        teachers = teachers.map((t: Teacher) => ({
             ...t,
-            loadCount: schoolLoads.filter((l) => l.user_id === t.id).length,
+            loadCount: schoolLoads.filter((l: any) => l.user_id === t.id)
+                .length,
         }));
 
-        allSubmissions = subsRes.data || [];
-        const teacherIds = new Set(teachers.map((t) => t.id));
-        allSubmissions = allSubmissions.filter((s) =>
+        allSubmissions = (subsRes.data || []).map((s: any) => s as Submission);
+        const teacherIds = new Set(teachers.map((t: Teacher) => t.id));
+        allSubmissions = allSubmissions.filter((s: Submission) =>
             teacherIds.has(s.user_id),
         );
 
         // Calculate KPIs
         const totalSchoolLoads = teachers.reduce(
-            (sum, t) => sum + (t.loadCount || 0),
+            (sum: number, t: Teacher) => sum + (t.loadCount || 0),
             0,
         );
 
         const currentWk = getWeekNumber();
-        const currentCal = calendar.find((c) => c.week_number === currentWk);
+        const currentCal = calendar.find(
+            (c: any) => c.week_number === currentWk,
+        );
 
         const overallStats = calculateCompliance(
             allSubmissions,
@@ -140,8 +202,10 @@
         kpi.lateCount = overallStats.Late;
 
         // At-risk: teachers with <70% compliance
-        kpi.atRiskCount = teachers.filter((t) => {
-            const subs = allSubmissions.filter((s) => s.user_id === t.id);
+        kpi.atRiskCount = teachers.filter((t: Teacher) => {
+            const subs = allSubmissions.filter(
+                (s: Submission) => s.user_id === t.id,
+            );
             const stats = calculateCompliance(
                 subs,
                 t.loadCount,
@@ -151,8 +215,10 @@
         }).length;
 
         // Previous week rate for trend
-        const prevCal = calendar.find((c) => c.week_number === currentWk - 1);
-        const prevWeekSubs = allSubmissions.filter((s) => {
+        const prevCal = calendar.find(
+            (c: any) => c.week_number === currentWk - 1,
+        );
+        const prevWeekSubs = allSubmissions.filter((s: Submission) => {
             const wn = s.week_number || getWeekNumber(new Date(s.created_at));
             return wn === currentWk - 1;
         });
@@ -172,11 +238,11 @@
             8,
             calendar,
         );
-        trendLabels = weeklyData.map((w) => w.label);
+        trendLabels = weeklyData.map((w: any) => w.label);
         trendDatasets = [
             {
                 label: "School Compliance",
-                data: weeklyData.map((w) => w.rate),
+                data: weeklyData.map((w: any) => w.rate),
                 color: "#0038A8",
             },
             {
@@ -214,16 +280,16 @@
         }
 
         heatmapWeeks = weeks;
-        heatmapRows = teachers.map((t) => t.full_name);
+        heatmapRows = teachers.map((t: Teacher) => t.full_name);
 
         const cells: any[] = [];
         for (const t of teachers) {
             const teacherSubs = allSubmissions.filter(
-                (s) => s.user_id === t.id,
+                (s: Submission) => s.user_id === t.id,
             );
             for (const w of weeks) {
                 const weekSubs = teacherSubs.filter(
-                    (s) => s.week_number === w.week,
+                    (s: Submission) => s.week_number === w.week,
                 );
                 const stats = calculateCompliance(
                     weekSubs,
@@ -245,20 +311,22 @@
 
     // Teacher table with sorting + search
     const sortedTeachers = $derived(() => {
-        let result = teachers.map((t) => {
-            const subs = allSubmissions.filter((s) => s.user_id === t.id);
+        let result = teachers.map((t: Teacher) => {
+            const subs = allSubmissions.filter(
+                (s: Submission) => s.user_id === t.id,
+            );
             const stats = calculateCompliance(subs, t.loadCount);
             return { ...t, ...stats };
         });
 
         if (searchQuery.trim()) {
             const q = searchQuery.toLowerCase();
-            result = result.filter((t) =>
+            result = result.filter((t: any) =>
                 t.full_name.toLowerCase().includes(q),
             );
         }
 
-        result.sort((a, b) => {
+        result.sort((a: any, b: any) => {
             const aVal = a[sortField];
             const bVal = b[sortField];
             if (typeof aVal === "number" && typeof bVal === "number") {
